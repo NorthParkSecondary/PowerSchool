@@ -1,45 +1,38 @@
 // --- Configuration ---
-const pdfUrl = 'https://document-portal.ca.powerschool.com/pdf/_g8o5kwivv.pdf?AWSAccessKeyId=AKIAQFEOQEHRFX2R67UY&Expires=1745973188&Signature=i6yAN5vria4XNg8zVnEQ4NpJwgk%3D'; // Use the provided URL
+const pdfUrl = 'https://document-portal.ca.powerschool.com/pdf/_g8o5kwivv.pdf?AWSAccessKeyId=AKIAQFEOQEHRFX2R67UY&Expires=1745973188&Signature=i6yAN5vria4XNg8zVnEQ4NpJwgk%3D';
 const pdfFileName = '_g8o5kwivv.pdf'; // Desired filename for download
+
+// --- PDF.js Initialization ---
+// Get the library object (assuming pdf.mjs was loaded)
+const { pdfjsLib } = globalThis;
+if (!pdfjsLib) {
+    console.error("PDF.js library (pdf.mjs) not found. Ensure it's loaded in the HTML <head>.");
+} else {
+    // Set the worker source (important for performance and compatibility)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '//mozilla.github.io/pdf.js/build/pdf.worker.mjs';
+}
 
 // --- Global Variables ---
 let pdfDoc = null;
 let currentPageNum = 1;
 let pageRendering = false;
 let pageNumPending = null;
+let currentScale = 1.0; // Keep track of current scale for potential future zoom features (not implemented here)
 
 // --- DOM Element References ---
-let canvas = null;
-let pageNumSpan = null;
-let pageCountSpan = null;
-let prevButton = null;
-let nextButton = null;
-let viewerContainer = null;
-let controlsContainer = null;
+const canvas = document.getElementById('pdf-canvas');
+const pageNumSpan = document.getElementById('page-num');
+const pageCountSpan = document.getElementById('page-count');
+const prevButton = document.getElementById('prev-page');
+const nextButton = document.getElementById('next-page');
+const viewerContainer = document.querySelector('.pdf-viewer-container'); // White box container
+const controlsContainer = document.querySelector('.pdf-controls'); // Controls container
 
-// --- Get DOM Elements (run after DOM is ready) ---
-function getElements() {
-    canvas = document.getElementById('pdf-canvas');
-    pageNumSpan = document.getElementById('page-num');
-    pageCountSpan = document.getElementById('page-count');
-    prevButton = document.getElementById('prev-page');
-    nextButton = document.getElementById('next-page');
-    viewerContainer = document.querySelector('.pdf-viewer-container'); // White box container
-    controlsContainer = document.querySelector('.pdf-controls'); // Controls container
-}
-
-// --- Core PDF Rendering Function ---
+// --- Core PDF Rendering Function (with DPR handling) ---
 function renderPage(num) {
-    // Ensure we have the global pdfjsLib object from the legacy script
-    if (typeof pdfjsLib === 'undefined' || !pdfjsLib.getDocument) {
-        console.error("pdfjsLib is not defined. Ensure pdf.js is loaded before this script.");
-        if(viewerContainer) viewerContainer.innerHTML = '<p style="color: red; text-align: center;">PDF library not loaded correctly.</p>';
-        return;
-    }
-
     if (!pdfDoc || !canvas || !viewerContainer) {
         console.error("PDF Document or required elements not ready for rendering.");
-        return; // Exit if dependencies aren't met
+        return;
     }
     pageRendering = true;
 
@@ -50,39 +43,39 @@ function renderPage(num) {
     // Get page
     pdfDoc.getPage(num).then(page => {
         const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1; // Get device pixel ratio for high-res displays
+        const dpr = window.devicePixelRatio || 1; // Get Device Pixel Ratio
 
-        // Calculate the desired display width (layout width) based on container
-        const availableLayoutWidth = viewerContainer.clientWidth - (2 * parseFloat(getComputedStyle(viewerContainer).paddingLeft || 0));
+        // Calculate the desired display width (container width minus padding)
+        const availableWidth = viewerContainer.clientWidth - (viewerContainer.style.paddingLeft ? parseFloat(viewerContainer.style.paddingLeft) * 2 : 20); // approx padding
+        const desiredWidth = availableWidth > 50 ? availableWidth : 600; // Use a sensible fallback
 
         // Get viewport at scale 1 to determine aspect ratio
         const viewportBase = page.getViewport({ scale: 1 });
+        const scale = desiredWidth / viewportBase.width; // Calculate scale needed to fit width
+        const viewport = page.getViewport({ scale: scale });
 
-        // Determine the scale to fit the page width within the available layout width
-        const scale = availableLayoutWidth > 0 ? availableLayoutWidth / viewportBase.width : 1;
-        const viewportScaled = page.getViewport({ scale: scale });
+        // Set CANVAS drawing buffer size based on DPR for sharpness
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
 
-        // Set canvas *drawing surface* size considering device pixel ratio for sharpness
-        canvas.width = Math.floor(viewportScaled.width * dpr);
-        canvas.height = Math.floor(viewportScaled.height * dpr);
+        // Set CSS size to control the DISPLAY size of the canvas
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
 
-        // Set canvas *display size* using CSS to match the scaled viewport size
-        canvas.style.width = `${Math.floor(viewportScaled.width)}px`;
-        canvas.style.height = `${Math.floor(viewportScaled.height)}px`;
+        // Scale the canvas context to account for DPR
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // Clears previous transforms and sets DPR scale
 
-        // Scale the canvas context to account for the higher resolution drawing surface
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-        // Render PDF page into the scaled canvas context
+        // Render PDF page into canvas context
         const renderContext = {
           canvasContext: ctx,
-          viewport: viewportScaled // Use the viewport scaled for layout size
+          viewport: viewport // Use the viewport calculated for the desired display size
         };
         const renderTask = page.render(renderContext);
 
         // Wait for rendering to finish
         renderTask.promise.then(() => {
           pageRendering = false;
+          currentScale = scale; // Store the scale used
           if(pageNumSpan) pageNumSpan.textContent = num; // Update page number display
 
           // Update button states AFTER rendering
@@ -110,7 +103,6 @@ function renderPage(num) {
     });
 }
 
-
 // --- Queue Rendering for Smooth Navigation ---
 function queueRenderPage(num) {
   if (pageRendering) {
@@ -128,10 +120,12 @@ function onPrevPage() {
 }
 
 function onNextPage() {
-  if (!pdfDoc || currentPageNum >= pdfDoc.numPages) return;
-  currentPageNum++;
-  queueRenderPage(currentPageNum);
+    // Check if pdfDoc and numPages are available before proceeding
+    if (!pdfDoc || currentPageNum >= pdfDoc.numPages) return;
+    currentPageNum++;
+    queueRenderPage(currentPageNum);
 }
+
 
 // --- Download Button Setup ---
 function setupDownloadButtons() {
@@ -147,16 +141,13 @@ function setupDownloadButtons() {
         if (button) {
             button.href = pdfUrl;
             button.setAttribute('download', pdfFileName);
-            // console.log(`Download button ${index + 1} set up.`);
+            // console.log(`Download button ${index + 1} set up for ${pdfUrl}`);
         }
     });
 }
 
 // --- Main Initialization Function ---
 function initializePdfViewer() {
-    // Get elements first
-    getElements();
-
     // Check if essential elements exist
     if (!canvas || !viewerContainer || !controlsContainer || !prevButton || !nextButton || !pageNumSpan || !pageCountSpan) {
         console.error("One or more PDF viewer elements not found in the DOM. Initialization aborted.");
@@ -164,15 +155,12 @@ function initializePdfViewer() {
         return;
     }
 
-     // Check if PDF.js library is loaded (global variable now)
+     // Check if PDF.js library is loaded and ready
     if (typeof pdfjsLib === 'undefined' || !pdfjsLib.getDocument) {
-        console.error("PDF.js library (pdfjsLib) not found globally. Ensure pdf.js is loaded before this script.");
+        console.error("PDF.js library not loaded or ready. Initialization aborted.");
          if(viewerContainer) viewerContainer.innerHTML = '<p style="color: red; text-align: center;">PDF library failed to load.</p>';
          return;
     }
-
-    // Set the worker source (using the global object)
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '//mozilla.github.io/pdf.js/build/pdf.worker.js'; // Use .js worker
 
     console.log("Initializing PDF Viewer...");
 
@@ -181,7 +169,12 @@ function initializePdfViewer() {
     nextButton.addEventListener('click', onNextPage);
 
     // Asynchronously load the PDF document
-    const loadingTask = pdfjsLib.getDocument({ url: pdfUrl, withCredentials: false });
+    const loadingTask = pdfjsLib.getDocument({
+        url: pdfUrl,
+        // Optional: Improve CORS handling if needed, though direct links often work
+        // withCredentials: false
+    });
+
     loadingTask.promise.then(pdfDoc_ => {
         console.log("PDF loaded successfully.");
         pdfDoc = pdfDoc_;
@@ -195,40 +188,66 @@ function initializePdfViewer() {
 
     }).catch(err => {
         console.error("Error loading PDF document:", err);
-        // Display more specific error if available
-        let errMsg = `Error loading PDF: ${err.message || 'Unknown error'}.`;
-        if (err.name === 'CorsNotEnabledError' || err.message.includes('CORS')) { // Check for CORS errors
-           errMsg = 'Error: Could not load PDF due to CORS policy. The server hosting the PDF needs to allow requests from this website.';
-        } else if (err.name === 'UnexpectedResponseException') { // Check for network/server errors
-            errMsg = `Error: Unexpected server response (${err.status || 'unknown status'}) while loading PDF. Check the PDF URL.`;
-        } else if (err.name === 'InvalidPDFException') {
-             errMsg = 'Error: Invalid or corrupt PDF file.';
+        let errorMessage = `Error loading PDF: ${err.message}.`;
+        if (err.name === 'CorsNotAllowedError') {
+            errorMessage += ' This might be a CORS issue. Ensure the server hosting the PDF allows requests from this domain.';
+        } else if (err.name === 'UnexpectedResponseException') {
+             errorMessage += ` Status: ${err.status}. The server returned an unexpected response.`;
         }
+         errorMessage += ' Please try downloading the file directly.';
 
         if(viewerContainer) {
-            viewerContainer.innerHTML = `<p style="color: red; text-align: center;">${errMsg} Please try downloading the file.</p>`;
+            viewerContainer.innerHTML = `<p style="color: red; text-align: center;">${errorMessage}</p>`;
         }
          if(controlsContainer) controlsContainer.style.display = 'none'; // Hide controls on error
+
          // Still try to set up download buttons even if viewer fails
          setupDownloadButtons();
     });
 }
 
 // --- Execute Initialization ---
-// Wait for the DOM to be fully loaded before trying to access elements and the global pdfjsLib
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializePdfViewer);
-} else {
-    // DOMContentLoaded has already fired
-    initializePdfViewer();
+// Use robust timing checks for Elementor/library compatibility
+function attemptInitialization() {
+    // Check if necessary elements are likely present AND pdfjsLib is defined and seems ready
+     if (document.getElementById('pdf-canvas') && typeof pdfjsLib !== 'undefined' && pdfjsLib.getDocument) {
+        initializePdfViewer();
+    } else {
+         // If not ready, wait a bit and try again, but don't retry forever
+         console.log("PDF viewer elements or library not ready, retrying...");
+         let retries = 5; // Limit retries
+         const retryInterval = setInterval(() => {
+            if (document.getElementById('pdf-canvas') && typeof pdfjsLib !== 'undefined' && pdfjsLib.getDocument) {
+                 clearInterval(retryInterval);
+                 initializePdfViewer();
+            } else if (--retries <= 0) {
+                 clearInterval(retryInterval);
+                 console.error("PDF viewer initialization failed after multiple retries.");
+                 if(viewerContainer && !viewerContainer.querySelector('p')) { // Avoid overwriting error messages
+                    viewerContainer.innerHTML = '<p style="color: red; text-align: center;">Failed to initialize PDF viewer.</p>';
+                 }
+            }
+         }, 300);
+    }
 }
 
-// Optional: Re-run setupDownloadButtons if using Elementor and buttons might load later
-// Be cautious with this, as it might run multiple times unnecessarily
+// Run initialization logic after the DOM is fully loaded
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attemptInitialization);
+} else {
+    // DOM already loaded, but give a minimal timeout for potentially async loaded libs/elements
+    setTimeout(attemptInitialization, 50);
+}
+
+// Optional: Listen for Elementor's frontend init event as another potential trigger,
+// but the DOMContentLoaded/timeout above should be the primary method.
 window.addEventListener('elementor/frontend/init', () => {
-    console.log('Elementor frontend initialized, re-checking download buttons.');
-    // Run only if initialization hasn't happened yet OR if download buttons weren't found initially
-    if (!pdfDoc || document.querySelectorAll('a.pdf-download-button[download]').length < 2) {
-        setTimeout(setupDownloadButtons, 500); // Delay slightly after init
+    console.log('Elementor frontend initialized, re-checking PDF viewer initialization.');
+    // Only attempt if pdfDoc isn't already loaded (to avoid multiple initializations)
+    if (!pdfDoc && document.getElementById('pdf-canvas')) {
+       setTimeout(attemptInitialization, 100); // Give Elementor a moment
+    } else if (pdfDoc) {
+        // If already initialized, maybe just re-setup buttons in case Elementor rebuilt them
+        setupDownloadButtons();
     }
 });
