@@ -1,5 +1,5 @@
 // --- Configuration ---
-const pdfUrl = '_g8o5kwivv.pdf';
+const pdfUrl = 'https://files.catbox.moe/p2bx0q.pdf';
 const pdfFileName = '_g8o5kwivv.pdf'; // Desired filename for download
 
 // --- PDF.js Initialization ---
