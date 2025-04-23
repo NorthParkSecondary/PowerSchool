@@ -1,5 +1,5 @@
 // --- Configuration ---
-const pdfUrl = 'blob:https://instant.io/e0cd0cd5-5393-4431-9d54-8edb63c696c4';
+const pdfUrl = '_g8o5kwivv.pdf';
 const pdfFileName = '_g8o5kwivv.pdf'; // Desired filename for download
 
 // --- PDF.js Initialization ---
