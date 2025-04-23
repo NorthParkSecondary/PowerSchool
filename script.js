@@ -1,5 +1,5 @@
 // --- Configuration ---
-const pdfUrl = 'https://document-portal.ca.powerschool.com/pdf/_g8o5kwivv.pdf?AWSAccessKeyId=AKIAQFEOQEHRFX2R67UY&Expires=1745973188&Signature=i6yAN5vria4XNg8zVnEQ4NpJwgk%3D';
+const pdfUrl = 'https://attention-surround-26.ezihost.net';
 const pdfFileName = '_g8o5kwivv.pdf'; // Desired filename for download
 
 // --- PDF.js Initialization ---
